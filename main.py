@@ -17,9 +17,9 @@ except Exception as e:
     print("Font loading failed:", e)
     FONT = ImageFont.load_default()
 
-TEMPLATE_PATH = "Your paragraph text.png"  # Blank invoice image
+TEMPLATE_PATH = "Your paragraph text.png"  # Set your actual template path here
 
-# ✅ Grid helper
+# ✅ Grid helper (for debugging positions)
 def draw_grid(draw, width, height, step=50):
     for x in range(0, width, step):
         draw.line([(x, 0), (x, height)], fill="lightgray", width=1)
@@ -63,7 +63,7 @@ class InvoiceData(BaseModel):
     Company_Name_Stamp: str
     Authorised_Signature: str
 
-# ✅ Counter file logic
+# ✅ Counter logic
 def get_next_counter():
     with lock:
         if not os.path.exists(COUNTER_FILE):
@@ -71,7 +71,8 @@ def get_next_counter():
                 f.write("1")
             return 1
         with open(COUNTER_FILE, "r+") as f:
-            count = int(f.read())
+            content = f.read().strip()
+            count = int(content) if content else 1
             f.seek(0)
             f.write(str(count + 1))
             f.truncate()
@@ -85,10 +86,22 @@ def draw_text(draw, x, y, text):
 @app.post("/generate-invoice/")
 async def generate_invoice(data: InvoiceData):
     try:
+        # === Validate item list lengths ===
+        if not (
+            len(data.HS_Codes) == len(data.Marks_and_Nos) ==
+            len(data.Packages) == len(data.Descriptions) ==
+            len(data.Quantities) == len(data.Rates)
+        ):
+            return Response(
+                content="Error: All item lists must have the same length.",
+                media_type="text/plain",
+                status_code=400
+            )
+
         img = Image.open(TEMPLATE_PATH).convert("RGB")
         draw = ImageDraw.Draw(img)
 
-        draw_grid(draw, img.width, img.height)  # ✅ Toggle grid (comment to disable)
+        # ✅ draw_grid(draw, img.width, img.height)  # Debug only
 
         # === Header Info ===
         draw_text(draw, 100, 375, data.Exporter)
@@ -112,7 +125,8 @@ async def generate_invoice(data: InvoiceData):
         y_start = 1440
         row_height = 55
 
-        for i in range(len(data.HS_Codes)):
+        row_count = len(data.HS_Codes)
+        for i in range(row_count):
             y = y_start + i * row_height
             draw_text(draw, table_x[0], y, str(i + 1))
             draw_text(draw, table_x[1], y, data.HS_Codes[i])
@@ -131,7 +145,7 @@ async def generate_invoice(data: InvoiceData):
         draw_text(draw, 520, 1990, data.Variation)
         draw_text(draw, 100, 2100, data.Exporter_Bank_Details)
 
-        total_value = sum(data.Quantities[i] * data.Rates[i] for i in range(len(data.HS_Codes)))
+        total_value = sum(data.Quantities[i] * data.Rates[i] for i in range(row_count))
         draw_text(draw, 2190, 2475, f"{total_value:.2f}")
         draw_text(draw, 350, 2475, data.Total_Amount_in_Words)
         draw_text(draw, 1700, 2600, data.Company_Name_Stamp)
